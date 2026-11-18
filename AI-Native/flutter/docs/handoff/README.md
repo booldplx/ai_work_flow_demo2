@@ -13,6 +13,10 @@
 
 **模板未随附契约文件**——接入时从你的后端仓库复制 OpenAPI 与版本 pin 到本目录。`openapi/` 子目录在首次同步时创建。
 
+## 当前 Demo 契约
+
+周末工坊预约使用 `workshops-demo v1.0.0`。 [OpenAPI 快照](openapi/workshops.yaml) · [VERSION](VERSION)
+
 ## 工作方式（源自源项目的实践）
 
 1. 后端 OpenAPI 定稿并打 tag → 后端发布 handoff 包（openapi + VERSION + stories-index）。

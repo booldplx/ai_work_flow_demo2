@@ -1,0 +1,302 @@
+---
+openapi: 3.0.3
+info:
+  title: 周末工坊模拟 API
+  version: 1.0.0
+  description: 固定单用户，JSON UTF-8。时间统一按 +08:00 展示。活动日期是固定演练数据，不作过期判定。
+servers:
+- url: http://127.0.0.1:8765/api/v1
+paths:
+  "/workshops":
+    get:
+      operationId: listWorkshops
+      summary: 按开始时间升序分页浏览活动
+      responses:
+        '200':
+          description: 一页活动
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/WorkshopPage"
+        '400':
+          description: 参数无效
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                BAD_REQUEST:
+                  value:
+                    code: BAD_REQUEST
+                    message: 分页参数无效
+      parameters:
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+      - name: pageSize
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 3
+          maximum: 20
+  "/workshops/{workshopId}":
+    get:
+      operationId: getWorkshop
+      summary: 读取活动与我的预约状态
+      responses:
+        '200':
+          description: 活动详情
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Workshop"
+        '404':
+          description: 记录不存在
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                NOT_FOUND:
+                  value:
+                    code: NOT_FOUND
+                    message: 记录不存在
+      parameters:
+      - name: workshopId
+        in: path
+        required: true
+        schema:
+          type: string
+  "/reservations":
+    get:
+      operationId: listReservations
+      summary: 我的有效预约，最近创建在前
+      responses:
+        '200':
+          description: 预约列表
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ReservationList"
+    post:
+      operationId: createReservation
+      summary: 为当前用户预约一席
+      responses:
+        '201':
+          description: 新预约
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Reservation"
+        '400':
+          description: 无效请求体
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                BAD_REQUEST:
+                  value:
+                    code: BAD_REQUEST
+                    message: 请求需要 workshopId
+        '404':
+          description: 记录不存在
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                NOT_FOUND:
+                  value:
+                    code: NOT_FOUND
+                    message: 记录不存在
+        '409':
+          description: 刷新详情后展示最新状态
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                FULL:
+                  value:
+                    code: FULL
+                    message: 名额已满
+                ALREADY_BOOKED:
+                  value:
+                    code: ALREADY_BOOKED
+                    message: 你已预约此活动
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - workshopId
+              properties:
+                workshopId:
+                  type: string
+              example:
+                workshopId: w01
+  "/reservations/{reservationId}":
+    delete:
+      operationId: cancelReservation
+      summary: 取消预约并归还一席
+      responses:
+        '204':
+          description: 成功，响应体为空
+        '404':
+          description: 记录不存在
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                NOT_FOUND:
+                  value:
+                    code: NOT_FOUND
+                    message: 记录不存在
+      parameters:
+      - name: reservationId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+components:
+  schemas:
+    Workshop:
+      type: object
+      required:
+      - id
+      - title
+      - startsAt
+      - endsAt
+      - venue
+      - description
+      - remaining
+      - myReservationId
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        venue:
+          type: string
+        description:
+          type: string
+        remaining:
+          type: integer
+          minimum: 0
+          description: 此刻可预约的剩余席位
+        myReservationId:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: 当前演练用户的有效预约 ID，未预约为 null
+      example:
+        id: w01
+        title: 纸上造景
+        startsAt: '2026-11-21T14:00:00+08:00'
+        endsAt: '2026-11-21T16:00:00+08:00'
+        venue: 河畔工作室
+        description: 用纸张的层次与结构，亲手制作一处微型山水景观。
+        remaining: 3
+        myReservationId:
+    WorkshopPage:
+      type: object
+      required:
+      - items
+      - nextPage
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Workshop"
+        nextPage:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: null 表示末页
+      example:
+        items:
+        - id: w01
+          title: 纸上造景
+          startsAt: '2026-11-21T14:00:00+08:00'
+          endsAt: '2026-11-21T16:00:00+08:00'
+          venue: 河畔工作室
+          description: 用纸张的层次与结构，亲手制作一处微型山水景观。
+          myReservationId:
+          remaining: 3
+        - id: w02
+          title: 手捏陶杯
+          startsAt: '2026-11-22T14:00:00+08:00'
+          endsAt: '2026-11-22T16:00:00+08:00'
+          venue: 社区陶艺室
+          description: 用手捏出杯壁，体验陶土成形。
+          myReservationId:
+          remaining: 0
+        - id: w03
+          title: 手工装帧
+          startsAt: '2026-11-28T14:00:00+08:00'
+          endsAt: '2026-11-28T16:00:00+08:00'
+          venue: 邻里书房
+          description: 用针线装订一本口袋手册。
+          myReservationId:
+          remaining: 5
+        nextPage: 2
+    Reservation:
+      type: object
+      required:
+      - id
+      - workshop
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        workshop:
+          "$ref": "#/components/schemas/Workshop"
+      example:
+        id: 1
+        workshop:
+          id: w01
+          title: 纸上造景
+          startsAt: '2026-11-21T14:00:00+08:00'
+          endsAt: '2026-11-21T16:00:00+08:00'
+          venue: 河畔工作室
+          description: 用纸张的层次与结构，亲手制作一处微型山水景观。
+          remaining: 2
+          myReservationId: 1
+    ReservationList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Reservation"
+      example:
+        items: []
+    Error:
+      type: object
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string

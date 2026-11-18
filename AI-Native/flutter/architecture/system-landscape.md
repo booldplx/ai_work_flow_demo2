@@ -4,11 +4,15 @@
 
 ## 一、产品全景
 
-当前工程是 Flutter 初始计数器应用。首页显示计数，点击加号递增。首个业务需求、设计稿与验收范围由实际需求确定。
+当前应用为 Flutter 初始计数器。首个业务为周末工坊预约 Demo，面向想在周末体验手作的用户，覆盖 Android 和 iOS，使用简体中文。Demo 从「发现」进入，用户可以分页浏览活动、查看详情、免费预约一席，再到「我的预约」查看或取消。取消后可再次预约。
+
+体验范围包含加载、空态、失败重试、预约冲突、跨页状态同步和同库重启恢复。场次为固定演练数据，按东八区展示，可跨日期重复演练。账号注册与登录、支付、候补、推送和后台管理留待后续版本。
+
+页面采用随需求提供的 v1.0.0 设计稿。[P1 发现](../docs/prototype/周末工坊/v1.0.0/P1-发现.png) · [P2 活动详情](../docs/prototype/周末工坊/v1.0.0/P2-活动详情.png) · [P3 我的预约](../docs/prototype/周末工坊/v1.0.0/P3-我的预约.png)
 
 ## 二、系统边界
 
-工程包含 Android 与 iOS 宿主。计数器在页面内维护状态，当前无后端、持久化或第三方业务 SDK 接入。
+工程包含 Android 与 iOS 宿主。当前应用处于本地计数器阶段。周末工坊 Demo 使用资料包中的本地模拟服务。应用负责页面交互、提交互斥和读回恢复，模拟服务负责计算余位、限制固定体验者每场最多一笔有效预约、扣还席位及持久化。
 
 ## 三、技术栈与目录结构
 
@@ -47,15 +51,32 @@
 
 ### 4.1 API 契约（唯一真相）
 
-当前本地计数器的 API 范围为 N/A。首张网络卡从后端取得 OpenAPI 快照与 VERSION，同步到线根的 `docs/handoff/`，再登记环境、operationId 和成功判据。
+周末工坊模拟契约锁定为 `workshops-demo v1.0.0`（2026-11-18）。OpenAPI 3.0.3 的服务前缀为 `/api/v1`。以契约为准读取请求、响应、状态码与示例。 [OpenAPI 快照](../docs/handoff/openapi/workshops.yaml) · [VERSION](../docs/handoff/VERSION)
+
+| operationId | 方法与相对路径 | 成功判据 |
+|---|---|---|
+| `listWorkshops` | GET `/workshops` | 200，`items` 和 `nextPage`；默认从 1 开始，每页 3 条，`nextPage=null` 到末页 |
+| `getWorkshop` | GET `/workshops/{workshopId}` | 200，活动详情含 `remaining` 和 `myReservationId` |
+| `createReservation` | POST `/reservations` | 201，返回预约和更新后的 `workshop` |
+| `listReservations` | GET `/reservations` | 200，当前体验者有效预约的 `items`，最近创建在前 |
+| `cancelReservation` | DELETE `/reservations/{reservationId}` | 204，响应体为空，跳过 JSON 解析 |
+
+模拟服务入口为资料目录 `/Users/laopi/Desktop/Test/周末工坊预约/` 下的 `python3 mock/server.py`，仅监听开发机回环。默认数据库 `mock/local.sqlite3` 随同一数据库文件保留预约，使用 `--db` 可指定独立演练库。Flutter 调试地址按联调说明通过 `--dart-define=API_BASE_URL=…` 传入，以下为后续接入环境。 [联调说明](/Users/laopi/Desktop/Test/周末工坊预约/联调说明.md)
+
+| 环境 | `API_BASE_URL` |
+|---|---|
+| Mac / iOS Simulator | `http://127.0.0.1:8765/api/v1` |
+| Android Studio Emulator | `http://10.0.2.2:8765/api/v1` |
+| Android USB 调试设备 | 执行 `adb reverse tcp:8765 tcp:8765` 后使用 `http://127.0.0.1:8765/api/v1` |
+| iOS 真机 | 需要设备可达的调试服务地址 |
 
 ### 4.2 鉴权流程
 
-当前无登录流程。涉及会话的 Story 按届时交接的契约登记鉴权与恢复行为。
+周末工坊模拟服务固定一位体验者，无 token、登录或刷新流程。预约归属由服务端按固定体验者处理。
 
 ### 4.3 错误码分层（与后端对齐）
 
-当前无服务端错误码。接入接口后按实际契约填写，展示方式见[错误展示规则](../rules/error-display-conventions.md)。
+成功以各 operation 的 HTTP 状态判定。错误响应含 `code` 与 `message`，`400/BAD_REQUEST` 表示分页参数或创建请求体无效，`404/NOT_FOUND` 表示目标记录不存在，创建时的 `409/FULL` 与 `409/ALREADY_BOOKED` 分别表示满额与已有有效预约。写入超时或断线时先查询服务端结果，再恢复交互。 反馈方式参见[错误展示规则](../rules/error-display-conventions.md)。
 
 ## 五、AI Native 工程资产
 
@@ -88,3 +109,4 @@
 | 日期 | 变更 |
 |------|------|
 | 2026-11-18 | 按当前应用工程完成首次接入 |
+| 2026-11-18 | 登记周末工坊预约的产品范围、设计稿和模拟契约 workshops-demo v1.0.0 |
