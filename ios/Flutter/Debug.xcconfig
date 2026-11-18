@@ -1,1 +1,4 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
 #include "Generated.xcconfig"
+// Xcode 27 simulator SDK supports deployment targets from iOS 15.
+IPHONEOS_DEPLOYMENT_TARGET[sdk=iphonesimulator*] = 15.0
