@@ -47,11 +47,16 @@ class WorkshopPage {
 }
 
 class WorkshopFailure implements Exception {
-  const WorkshopFailure({this.notFound = false});
-  final bool notFound;
+  const WorkshopFailure({bool notFound = false, this.statusCode, this.code})
+    : _notFound = notFound;
+  final bool _notFound;
+  final int? statusCode;
+  final String? code;
+  bool get notFound => _notFound || statusCode == 404;
 }
 
 abstract interface class WorkshopRepository {
+  Future<Reservation> createReservation(String id);
   Future<WorkshopPage> listWorkshops(int page, {CancelToken? cancelToken});
   Future<Workshop> getWorkshop(String id, {CancelToken? cancelToken});
 }
@@ -63,22 +68,69 @@ class WorkshopService {
     String path, {
     Map<String, dynamic>? query,
     CancelToken? cancelToken,
+  }) => _request(path, query: query, cancelToken: cancelToken);
+
+  Future<Map<String, dynamic>> create(String id) =>
+      _request('reservations', body: {'workshopId': id});
+
+  Future<Map<String, dynamic>> _request(
+    String path, {
+    Map<String, dynamic>? query,
+    Map<String, dynamic>? body,
+    CancelToken? cancelToken,
   }) async {
-    final response = await client.get<Map<String, dynamic>>(
-      path,
-      queryParameters: query,
-      cancelToken: cancelToken,
-    );
-    if (response.statusCode != 200 || response.data == null) {
-      throw const WorkshopFailure();
+    try {
+      final response = await client.request<Map<String, dynamic>>(
+        path,
+        queryParameters: query,
+        data: body,
+        cancelToken: cancelToken,
+        options: Options(
+          method: body == null ? 'GET' : 'POST',
+          sendTimeout: const Duration(seconds: 10),
+        ),
+      );
+      if (response.statusCode != (body == null ? 200 : 201) ||
+          response.data == null) {
+        throw const WorkshopFailure();
+      }
+      return response.data!;
+    } on DioException catch (error) {
+      final data = error.response?.data;
+      throw WorkshopFailure(
+        statusCode: error.response?.statusCode,
+        code: data is Map && data['code'] is String
+            ? data['code'] as String
+            : null,
+      );
     }
-    return response.data!;
   }
 }
 
 class HttpWorkshopRepository implements WorkshopRepository {
   HttpWorkshopRepository(this.service);
   final WorkshopService service;
+  @override
+  Future<Reservation> createReservation(String id) async {
+    try {
+      final json = await service.create(id);
+      final reservation = Reservation(
+        json['id'] as int,
+        Workshop.fromJson(json['workshop'] as Map<String, dynamic>),
+      );
+      if (reservation.id < 1 ||
+          reservation.workshop.id != id ||
+          reservation.workshop.myReservationId != reservation.id) {
+        throw const FormatException('Invalid reservation');
+      }
+      return reservation;
+    } on WorkshopFailure {
+      rethrow;
+    } catch (_) {
+      throw const WorkshopFailure();
+    }
+  }
+
   @override
   Future<WorkshopPage> listWorkshops(
     int page, {
@@ -117,10 +169,16 @@ class HttpWorkshopRepository implements WorkshopRepository {
           cancelToken: cancelToken,
         ),
       );
-    } on DioException catch (error) {
-      throw WorkshopFailure(notFound: error.response?.statusCode == 404);
+    } on WorkshopFailure {
+      rethrow;
     } catch (_) {
       throw const WorkshopFailure();
     }
   }
+}
+
+class Reservation {
+  const Reservation(this.id, this.workshop);
+  final int id;
+  final Workshop workshop;
 }

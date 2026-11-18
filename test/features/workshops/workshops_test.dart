@@ -18,6 +18,9 @@ Workshop workshop(String id) => Workshop(
 );
 
 class FakeRepository implements WorkshopRepository {
+  @override
+  Future<Reservation> createReservation(String id) =>
+      throw UnimplementedError();
   final pages = <int>[];
   final pending = <Completer<WorkshopPage>>[];
   final detailIds = <String>[];

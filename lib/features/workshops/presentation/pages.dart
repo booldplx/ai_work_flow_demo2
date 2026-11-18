@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
 import '../data/workshops.dart';
+import '../data/workshop_session.dart';
 import 'view_models.dart';
 
 const accent = Color(0xFF963E2A);
@@ -11,10 +12,18 @@ const secondary = Color(0xFF625D57);
 final repositoryProvider = Provider<WorkshopRepository>(
   (_) => throw StateError('Repository required'),
 );
+final sessionProvider = Provider<WorkshopSession>((ref) {
+  final session = WorkshopSession(ref.watch(repositoryProvider));
+  ref.onDispose(session.dispose);
+  return session;
+});
 final discoverProvider = ChangeNotifierProvider.autoDispose<DiscoverViewModel>((
   ref,
 ) {
-  final vm = DiscoverViewModel(ref.watch(repositoryProvider));
+  final vm = DiscoverViewModel(
+    ref.watch(repositoryProvider),
+    session: ref.watch(sessionProvider),
+  );
   unawaited(vm.load());
   return vm;
 });
@@ -256,20 +265,25 @@ class WorkshopRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final date = workshopTime(workshop.startsAt);
     final booked = workshop.myReservationId != null;
-    final status = Column(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        if (booked) Text('已预约', style: style(16, color: accent)),
-        Text(
-          booked || workshop.remaining > 0
-              ? '余 ${workshop.remaining} 席'
-              : '已满额',
-          style: style(
-            16,
-            color: booked || workshop.remaining > 0 ? accent : secondary,
+    final status = ConstrainedBox(
+      constraints: BoxConstraints(
+        minHeight: MediaQuery.textScalerOf(context).scale(16) * 2.6,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (booked) Text('已预约', style: style(16, color: accent)),
+          Text(
+            booked || workshop.remaining > 0
+                ? '余 ${workshop.remaining} 席'
+                : '已满额',
+            style: style(
+              16,
+              color: booked || workshop.remaining > 0 ? accent : secondary,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
     return InkWell(
       onTap: onTap,
@@ -350,12 +364,88 @@ class WorkshopDetailPage extends ConsumerStatefulWidget {
   ConsumerState<WorkshopDetailPage> createState() => _WorkshopDetailPageState();
 }
 
-class _WorkshopDetailPageState extends ConsumerState<WorkshopDetailPage> {
+class _WorkshopDetailPageState extends ConsumerState<WorkshopDetailPage>
+    with WidgetsBindingObserver {
   late DetailViewModel _vm;
+  OverlayEntry? _toast;
+  Timer? _toastTimer;
+  int _seenFeedback = 0;
+  final _actionKey = GlobalKey();
+
+  void _showFeedback() {
+    if (!mounted || _seenFeedback == _vm.feedbackSerial) return;
+    final serial = _seenFeedback = _vm.feedbackSerial;
+    final message = _vm.feedback ?? '';
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted &&
+          _seenFeedback == serial &&
+          ModalRoute.of(context)?.isCurrent == true) {
+        _displayToast(message);
+      }
+    });
+  }
+
+  void _displayToast(String message) {
+    _clearToast();
+    final box = _actionKey.currentContext?.findRenderObject() as RenderBox?;
+    final bottom = box != null && box.hasSize
+        ? MediaQuery.sizeOf(context).height -
+              box.localToGlobal(Offset.zero).dy +
+              12
+        : MediaQuery.paddingOf(context).bottom + 24;
+    _toast = OverlayEntry(
+      builder: (_) => Positioned(
+        bottom: bottom,
+        left: 24,
+        right: 24,
+        child: IgnorePointer(
+          child: Material(
+            color: const Color(0xFF1C1B19),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Semantics(
+                liveRegion: true,
+                child: Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: style(16, color: const Color(0xFFF7F5F2)),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    Overlay.of(context).insert(_toast!);
+    _toastTimer = Timer(const Duration(seconds: 2), _clearToast);
+  }
+
+  void _clearToast() {
+    _toastTimer?.cancel();
+    _toast?.remove();
+    _toast?.dispose();
+    _toast = null;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        _vm.phase == ReservationPhase.unknown) {
+      unawaited(_vm.queryResult());
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    _vm = DetailViewModel(ref.read(repositoryProvider), widget.id);
+    WidgetsBinding.instance.addObserver(this);
+    _vm = DetailViewModel(
+      ref.read(repositoryProvider),
+      widget.id,
+      session: ref.read(sessionProvider),
+    );
+    _vm.addListener(_showFeedback);
     unawaited(_vm.load());
   }
 
@@ -363,14 +453,25 @@ class _WorkshopDetailPageState extends ConsumerState<WorkshopDetailPage> {
   void didUpdateWidget(WorkshopDetailPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.id != widget.id) {
+      _clearToast();
+      _seenFeedback = 0;
+      _vm.removeListener(_showFeedback);
       _vm.dispose();
-      _vm = DetailViewModel(ref.read(repositoryProvider), widget.id);
+      _vm = DetailViewModel(
+        ref.read(repositoryProvider),
+        widget.id,
+        session: ref.read(sessionProvider),
+      );
+      _vm.addListener(_showFeedback);
       unawaited(_vm.load());
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _clearToast();
+    _vm.removeListener(_showFeedback);
     _vm.dispose();
     super.dispose();
   }
@@ -390,6 +491,18 @@ class _WorkshopDetailPageState extends ConsumerState<WorkshopDetailPage> {
       if (!didPop) _back();
     },
     child: Scaffold(
+      bottomNavigationBar: ListenableBuilder(
+        listenable: _vm,
+        builder: (context, _) {
+          if (_vm.loading || _vm.failed || _vm.workshop == null) {
+            return const SizedBox.shrink();
+          }
+          return SafeArea(
+            key: _actionKey,
+            child: ReservationActionPanel(vm: _vm),
+          );
+        },
+      ),
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -506,4 +619,62 @@ class FeedbackPanel extends StatelessWidget {
       ],
     ),
   );
+}
+
+class ReservationActionPanel extends StatelessWidget {
+  const ReservationActionPanel({super.key, required this.vm});
+  final DetailViewModel vm;
+  @override
+  Widget build(BuildContext context) {
+    final phase = vm.phase;
+    final booked = vm.workshop!.myReservationId != null;
+    String label;
+    VoidCallback? action;
+    if (phase == ReservationPhase.submitting) {
+      label = '预约中…';
+    } else if (phase == ReservationPhase.reconciling) {
+      label = '查询中…';
+    } else if (phase == ReservationPhase.unknown) {
+      label = '重新查询';
+      action = vm.queryResult;
+    } else if (booked) {
+      label = '已预约';
+    } else if (vm.workshop!.remaining == 0) {
+      label = '已满额';
+    } else {
+      label = '预约活动';
+      action = vm.reserve;
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (phase == ReservationPhase.unknown)
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Text('预约结果待确认', style: style(16)),
+          ),
+        SizedBox(
+          width: double.infinity,
+          child: TextButton(
+            style: TextButton.styleFrom(
+              backgroundColor:
+                  action != null || phase == ReservationPhase.submitting
+                  ? accent
+                  : null,
+              foregroundColor: const Color(0xFFF7F5F2),
+              disabledForegroundColor: phase == ReservationPhase.submitting
+                  ? const Color(0xFFF7F5F2)
+                  : secondary,
+              minimumSize: const Size(0, 64),
+              shape: const RoundedRectangleBorder(),
+            ),
+            onPressed: action,
+            child: Text(label, style: style(22)),
+          ),
+        ),
+        if (booked && phase == ReservationPhase.idle)
+          TextButton(onPressed: null, child: Text('查看我的预约', style: style(18))),
+      ],
+    );
+  }
 }

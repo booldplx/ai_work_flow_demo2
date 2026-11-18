@@ -63,4 +63,69 @@ void main() {
     );
     expect(() => Workshop.fromJson({'remaining': 3}), throwsFormatException);
   });
+  for (final status in [201, 400, 404, 409]) {
+    test('createReservation HTTP $status request and mapping', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final dio = Dio(
+        BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}/api/v1/'),
+      );
+      addTearDown(() async {
+        dio.close(force: true);
+        await server.close(force: true);
+      });
+      server.listen((request) async {
+        expect(request.method, 'POST');
+        expect(request.uri.path, '/api/v1/reservations');
+        expect(jsonDecode(await utf8.decoder.bind(request).join()), {
+          'workshopId': 'w01',
+        });
+        request.response.headers.contentType = ContentType.json;
+        request.response.statusCode = status;
+        request.response.write(
+          jsonEncode(
+            status == 201
+                ? {
+                    'id': 1,
+                    'workshop': {
+                      'id': 'w01',
+                      'title': '纸上造景',
+                      'startsAt': '2026-11-21T14:00:00+08:00',
+                      'endsAt': '2026-11-21T16:00:00+08:00',
+                      'venue': '工作室',
+                      'description': '介绍',
+                      'remaining': 2,
+                      'myReservationId': 1,
+                    },
+                  }
+                : {
+                    'code': status == 409
+                        ? 'FULL'
+                        : status == 400
+                        ? 'BAD_REQUEST'
+                        : 'NOT_FOUND',
+                    'message': '错误',
+                  },
+          ),
+        );
+        await request.response.close();
+      });
+      final repo = HttpWorkshopRepository(WorkshopService(dio));
+      if (status == 201) {
+        final result = await repo.createReservation('w01');
+        expect(result.workshop.remaining, 2);
+        expect(result.id, 1);
+      } else {
+        await expectLater(
+          repo.createReservation('w01'),
+          throwsA(
+            isA<WorkshopFailure>().having(
+              (e) => e.statusCode,
+              'status',
+              status,
+            ),
+          ),
+        );
+      }
+    });
+  }
 }
